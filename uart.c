@@ -4,6 +4,8 @@
 #include <linux/kernel.h>
 #include <linux/fs.h>
 #include <linux/uaccess.h>
+#include <linux/hrtimer.h>
+#include <linux/timer.h>
 
 
 #define DEVICE_NAME "uartchar"
@@ -18,18 +20,23 @@ static int majorNumber;                  ///< Stores the device number -- determ
 static struct class *uartClass = NULL;   ///< The device-driver class struct pointer
 static struct device *uartDevice = NULL; ///< The device-driver device struct pointer
 
+//hrtimer for transmitter
+static struct hrtimer hrtimer_tx;
+
+static int BAUDRATE = 4800;
+
 static int dev_open(struct inode *, struct file *);
 static int dev_release(struct inode *, struct file *);
 static ssize_t dev_read(struct file *, char *, size_t, loff_t *);
 static ssize_t dev_write(struct file *, const char *, size_t, loff_t *);
 
-static struct file_operations fops =
-    {
+static struct file_operations fops = {
         .open = dev_open,
         .read = dev_read,
         .write = dev_write,
         .release = dev_release,
 };
+static enum hrtimer_restart transferData(struct hrtimer * unused);
 
 static int __init uart_init(void)
 {
@@ -65,11 +72,18 @@ static int __init uart_init(void)
         return PTR_ERR(uartDevice);
     }
     printk(KERN_INFO "UARTChar: device class created correctly\n");
+
+    //Khoi tao timer
+    hrtimer_init(&hrtimer_tx, CLOCK_REALTIME, HRTIMER_MODE_REL);
+    hrtimer_tx.function = transferData;
     return 0;
 }
 
 static void __exit uart_exit(void)
 {
+    //cancel timer
+    hrtimer_cancel(&hrtimer_tx);
+
     device_destroy(uartClass, MKDEV(majorNumber, 0)); // remove the device
     class_unregister(uartClass);                      // unregister the device class
     class_destroy(uartClass);                         // remove the device class
@@ -86,6 +100,7 @@ static int dev_open(struct inode *inodep, struct file *filep)
 static ssize_t dev_read(struct file *filep, char *buffer, size_t len, loff_t *offset)
 {
     printk(KERN_INFO "UARTChar: Read device file\n");
+    hrtimer_start(&hrtimer_tx,  ktime_set(2, 0), HRTIMER_MODE_REL);
     return 0;
 }
 
@@ -101,5 +116,38 @@ static int dev_release(struct inode *inodep, struct file *filep)
     return 0;
 }
 
+/* transfer data function */
+static enum hrtimer_restart transferData(struct hrtimer * unused)
+{
+	
+	printk(KERN_INFO "UARTChar: Transfer Data function is invoked\n");
+
+    //forward timer
+	hrtimer_forward_now(&hrtimer_tx, ktime_set(2, (1000000/BAUDRATE)*1000 ));
+	
+	return HRTIMER_RESTART;
+}
+
+/* set output value for GPIO */
+// static void GPIOOutputValueSet(int gpio, bool value)
+// {
+// 	if (value)
+// 		pGPIO_REGISTER->GPSET[gpio / 32] = (1 << (gpio % 32));
+// 	else
+// 		pGPIO_REGISTER->GPCLR[gpio / 32] = (1 << (gpio % 32));
+// }
+
 module_init(uart_init);
 module_exit(uart_exit);
+
+
+
+/* 
+Su dung timer
+1. Khoi tao timer trong ham init
+hrtimer_init(&hrtimer_tx, CLOCK_REALTIME, HRTIMER_MODE_REL);
+2. Set function cho timer
+hrtimer_tx.function = transferData;
+3. Start timer
+hrtimer_start(&hrtimer_tx,  ktime_set(0, 0), HRTIMER_MODE_REL);
+ */
