@@ -27,6 +27,10 @@ static int GPIO_TX = 4;
 #define DEVICE_NAME "uartchar"
 #define CLASS_NAME "uart"
 
+#define TX_BUFFER_SIZE	256
+
+unsigned char TX_BUFFER[TX_BUFFER_SIZE+1];
+
 MODULE_LICENSE("GPL");
 MODULE_AUTHOR("NAMLB");
 MODULE_DESCRIPTION("Uart Device Driver");
@@ -137,9 +141,22 @@ static ssize_t dev_read(struct file *filep, char *buffer, size_t len, loff_t *of
     return 0;
 }
 
-static ssize_t dev_write(struct file *filep, const char *buffer, size_t len, loff_t *offset)
+static ssize_t dev_write(struct file *filep, const char *buf, size_t len, loff_t *offset)
 {
     printk(KERN_INFO "UARTChar: Write to device file\n");
+    int n;
+	
+	for(n=0;n<=strlen(buf);n++)
+	{
+	
+		TX_BUFFER[strlen(TX_BUFFER)]=buf[strlen(buf)-n];
+		if(strlen(TX_BUFFER)==TX_BUFFER_SIZE+1) {
+            memset(TX_BUFFER,'\0',TX_BUFFER_SIZE+1);
+        }			
+	}
+	
+	hrtimer_start(&hrtimer_tx,  ktime_set(0, 0), HRTIMER_MODE_REL);
+	
     return 0;
 }
 
@@ -156,8 +173,33 @@ static enum hrtimer_restart transferData(struct hrtimer * unused)
 	
 	printk(KERN_INFO "UARTChar: Transfer Data function is invoked\n");
 
-    //forward timer
-	hrtimer_forward_now(&hrtimer_tx, ktime_set(2, (1000000/BAUDRATE)*1000 ));
+    static int bit=-1;
+	
+	if(GPIOInputValueGet(GPIO_RX)==0 && bit==-1)	//Start bit received
+		bit++;
+	else	if(bit>=0 && bit<8)	//Data bits
+	{
+		if(GPIOInputValueGet(GPIO_RX)==0)
+			RX_DATA &= 0b01111111;
+		else
+			RX_DATA |= ~0b01111111;
+		
+		if(bit!=7)
+			RX_DATA >>= 1;
+			
+		bit++;
+	}
+	else	if(bit==8)	//Stop bit
+	{
+		bit=-1;
+		
+		RX_BUFFER[strlen(RX_BUFFER)]=RX_DATA;
+		
+		if(strlen(RX_BUFFER)==RX_BUFFER_SIZE+1)
+			memset(RX_BUFFER,'\0',RX_BUFFER_SIZE+1);
+	}
+	
+	hrtimer_forward_now(&hrtimer_rx, ktime_set(0, (1000000/BAUDRATE)*1000 ));
 	
 	return HRTIMER_RESTART;
 }
