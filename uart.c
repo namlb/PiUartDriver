@@ -8,6 +8,22 @@
 #include <linux/timer.h>
 
 
+/* comment this out for building for a RPi 1 */
+#define RASPBERRY_PI2_OR_PI3
+
+
+#define IO_ADDRESS(x)		(((x) & 0x00ffffff) + (((x) >> 4) & 0x0f000000) + 0xf0000000)
+#define __io_address(n)		IOMEM(IO_ADDRESS(n))
+#ifdef RASPBERRY_PI2_OR_PI3
+  #define BCM2708_PERI_BASE	0x3F000000
+#else
+  #define BCM2708_PERI_BASE	0x20000000
+#endif
+#define GPIO_BASE		(BCM2708_PERI_BASE + 0x200000) /* GPIO controller */
+
+// GPIO port for transmitter
+static int GPIO_TX = 4;
+
 #define DEVICE_NAME "uartchar"
 #define CLASS_NAME "uart"
 
@@ -30,13 +46,30 @@ static int dev_release(struct inode *, struct file *);
 static ssize_t dev_read(struct file *, char *, size_t, loff_t *);
 static ssize_t dev_write(struct file *, const char *, size_t, loff_t *);
 
+//declare struct of register
+struct GPIO_REGISTERS
+{
+	uint32_t GPFSEL[6];
+	uint32_t Reserved1;
+	uint32_t GPSET[2];
+	uint32_t Reserved2;
+	uint32_t GPCLR[2];
+	uint32_t Reserved3;
+	uint32_t GPLEV[2];
+} *pGPIO_REGISTER;
+
+
 static struct file_operations fops = {
         .open = dev_open,
         .read = dev_read,
         .write = dev_write,
         .release = dev_release,
 };
+
+// declare function
 static enum hrtimer_restart transferData(struct hrtimer * unused);
+static void GPIOOutputValueSet(int gpio, bool value);
+static void GPIOFunction(int gpio, int function);
 
 static int __init uart_init(void)
 {
@@ -116,6 +149,7 @@ static int dev_release(struct inode *inodep, struct file *filep)
     return 0;
 }
 
+
 /* transfer data function */
 static enum hrtimer_restart transferData(struct hrtimer * unused)
 {
@@ -128,14 +162,20 @@ static enum hrtimer_restart transferData(struct hrtimer * unused)
 	return HRTIMER_RESTART;
 }
 
+/* set gpio function */
+static void GPIOFunction(int gpio, int function)
+{	
+	pGPIO_REGISTER->GPFSEL[gpio / 10] = (pGPIO_REGISTER->GPFSEL[gpio / 10] & ~(0b111 << ((gpio % 10) * 3))) | ((function << ((gpio % 10) * 3)) & (0b111 << ((gpio % 10) * 3)));
+}
+
 /* set output value for GPIO */
-// static void GPIOOutputValueSet(int gpio, bool value)
-// {
-// 	if (value)
-// 		pGPIO_REGISTER->GPSET[gpio / 32] = (1 << (gpio % 32));
-// 	else
-// 		pGPIO_REGISTER->GPCLR[gpio / 32] = (1 << (gpio % 32));
-// }
+static void GPIOOutputValueSet(int gpio, bool value)
+{
+	if (value)
+		pGPIO_REGISTER->GPSET[gpio / 32] = (1 << (gpio % 32));
+	else
+		pGPIO_REGISTER->GPCLR[gpio / 32] = (1 << (gpio % 32));
+}
 
 module_init(uart_init);
 module_exit(uart_exit);
